@@ -1,0 +1,35 @@
+name: PS4 Manual Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-ps4-direct:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v4
+        with:
+          cmake-version: '3.21.x'
+
+      - name: Configure CMake for PS4
+        run: |
+          cmake -B build -G Ninja \
+            -DWERROR=ON \
+            -DPLATFORM=ps4 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Project
+        run: |
+          cmake --build build
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: butterscotch-ps4
+          path: build/butterscotch
+          
