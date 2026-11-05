@@ -774,7 +774,7 @@ elseif(PLATFORM STREQUAL "android")
 
     # stb_image
     target_include_directories(butterscotch PUBLIC vendor/stb/image)
-    # stb_vorbis (for miniaudio's OGG decoding)
+    # stb_vorbis (for miniaudio OGG decoding)
     target_include_directories(butterscotch PUBLIC vendor/stb/vorbis)
     # bzip2
     target_link_libraries(butterscotch PRIVATE bzip2)
