@@ -77,7 +77,8 @@ jobs:
           sudo apt-get install -y \
             libopenal-dev \
             libsdl2-dev \
-            libgles2-mesa-dev \
+            libgles-dev \
+            libgl1-mesa-dev \
             libavformat-dev \
             libavcodec-dev \
             libavutil-dev \
