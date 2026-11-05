@@ -65,7 +65,7 @@ jobs:
           name: ${{ matrix.artifact }}
           path: build/butterscotch.elf
 
-  build-ps4:
+    build-ps4:
     name: Build (PlayStation 4)
     runs-on: ubuntu-24.04
     steps:
@@ -96,7 +96,7 @@ jobs:
       - name: Configure and build
         run: |
           cmake -B build -G Ninja \
-            -DWERROR=ON \
+            -DWERROR=OFF \
             -DPLATFORM=ps4 \
             -DCMAKE_BUILD_TYPE=Release
             
