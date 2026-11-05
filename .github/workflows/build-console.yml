@@ -319,3 +319,32 @@ jobs:
         with:
           name: butterscotch-switch
           path: build/butterscotch.nro
+
+  build-ps4:
+    name: Build (PlayStation 4)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ps4-ccache-${{ github.sha }}
+          restore-keys: |
+            ps4-ccache-
+
+      - name: Configure and build
+        run: |
+          cmake -B build -G Ninja \
+            -DWERROR=ON \
+            -DPLATFORM=ps4 \
+            -DCMAKE_BUILD_TYPE=Release
+            
+          cmake --build build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: butterscotch-ps4
+          path: build/butterscotch
