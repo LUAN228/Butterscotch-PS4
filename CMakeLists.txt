@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 if(PLATFORM STREQUAL "ps3")
     set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/cmake/ppu.cmake)
+elseif(PLATFORM STREQUAL "ps4")
+    set(BACKEND "sdl2")
 endif()
 
 if(PLATFORM STREQUAL "vita")
