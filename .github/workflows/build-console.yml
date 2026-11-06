@@ -117,27 +117,30 @@ jobs:
             
           cmake --build build
 
-      - name: Prepare Orbis FPKG Structure
+      - name: Prepare Orbis FPKG Structure and Package
         run: |
           mkdir -p pkg_root/sce_sys
           
-          # Copiar o binário compilado para a raiz como eboot.bin
+          # Copiar o binário compilado como eboot.bin
           cp build/butterscotch pkg_root/eboot.bin
 
-          # Criar o param.sfo com as informações do projeto
+          # Criar o param.sfo básico
           cat << 'EOF' > pkg_root/sce_sys/param.sfo.txt
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
           EOF
 
-          # Se o data.win estiver presente no repositório, ele entra na estrutura
+          # Incluir data.win se existir no repositório
           if [ -f "data.win" ]; then
             cp data.win pkg_root/data.win
           fi
 
-      - name: Upload PS4 Files Artifact
+          # Criar a imagem ISO/Orbis filesystem layout base para o pacote
+          genisoimage -V "CUSA12345" -cache-inodes -J -R -o butterscotch.iso pkg_root/
+
+      - name: Upload PS4 FPKG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: butterscotch-ps4-orbis-files
-          path: pkg_root/
+          name: butterscotch-ps4-pkg
+          path: butterscotch.iso
