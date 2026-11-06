@@ -66,7 +66,7 @@ jobs:
           path: build/butterscotch.elf
 
   build-ps4:
-    name: Build (PlayStation 4)
+    name: Build (PlayStation 4 FPKG)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -85,7 +85,8 @@ jobs:
             libswscale-dev \
             libswresample-dev \
             pkg-config \
-            ninja-build
+            ninja-build \
+            genisoimage
 
       - name: Fix GLESv3 symlink
         run: |
@@ -116,8 +117,28 @@ jobs:
             
           cmake --build build
 
-      - name: Upload artifact
+      - name: Prepare Orbis FPKG Structure
+        run: |
+          mkdir -p pkg_root/sce_sys
+          
+          # Copiar o binário gerado para a raiz do pacote como eboot.bin principal
+          cp build/butterscotch pkg_root/eboot.bin
+
+          # Criar o param.sfo básico com ID e título do projeto
+          # (Pode alterar o TITLE_ID para o ID que preferir, ex: CUSA12345)
+          cat << 'EOF' > pkg_root/sce_sys/param.sfo.txt
+          TITLE "Butterscotch GameRunner"
+          TITLE_ID "CUSA12345"
+          VERSION "01.00"
+          EOF
+
+          # Se tiver o data.win do jogo na raiz do repositório, incluímos no pacote
+          if [ -f "data.win" ]; then
+            cp data.win pkg_root/data.win
+          fi
+
+      - name: Upload PS4 Files Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: butterscotch-ps4
-          path: build/butterscotch
+          name: butterscotch-ps4-orbis-files
+          path: pkg_root/
