@@ -87,6 +87,10 @@ jobs:
             pkg-config \
             ninja-build
 
+      - name: Fix GLESv3 symlink
+        run: |
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libGLESv2.so /usr/lib/x86_64-linux-gnu/libGLESv3.so
+
       - name: Set up ccache
         uses: actions/cache@v4
         with:
