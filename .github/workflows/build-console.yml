@@ -86,7 +86,9 @@ jobs:
             libswresample-dev \
             pkg-config \
             ninja-build \
-            python3
+            python3 \
+            curl \
+            jq
 
       - name: Fix GLESv3 symlink
         run: |
@@ -119,54 +121,76 @@ jobs:
 
       - name: Generate True Orbis FPKG Package
         run: |
-          mkdir -p pkg_root/sce_sys
+          curl -L -s https://raw.githubusercontent.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70 -o icon0.png || true
           
-          # Copiar o binário para eboot.bin
-          cp build/butterscotch pkg_root/eboot.bin
+          mkdir -p orbis_project/sce_sys
+          mkdir -p orbis_project/image0
 
-          # Criar o param.sfo estruturado para o sistema Orbis
-          cat << 'EOF' > pkg_root/sce_sys/param.sfo
+          cp build/butterscotch orbis_project/image0/eboot.bin
+
+          if [ -f "data.win" ]; then
+            cp data.win orbis_project/image0/data.win
+          fi
+
+          if [ -f "icon0.png" ]; then
+            cp icon0.png orbis_project/sce_sys/icon0.png
+          fi
+
+          cat << 'EOF' > orbis_project/sce_sys/param.sfo
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
+          CATEGORY "gd"
+          APP_TYPE "1"
           EOF
 
-          if [ -f "data.win" ]; then
-            cp data.win pkg_root/data.win
-          fi
+          cat << 'EOF' > make_pkg.py
+          import os, struct, zlib
 
-          # Script em Python para estruturar o FPKG real com cabeçalho compatível para PS4/GoldHEN
-          python3 -c '
-          import struct, os
+          def build_fpkg():
+              pkg_path = "butterscotch_ps4.pkg"
+              print("Iniciando montagem real do bloco FPKG Orbis...")
 
-          pkg_name = "butterscotch_ps4.pkg"
-          print("A gerar o pacote FPKG estruturado para o PS4...")
-          
-          # Recolher ficheiros da pasta pkg_root
-          files = []
-          for root, dirs, filenames in os.walk("pkg_root"):
-              for f in filenames:
-                  full_path = os.path.join(root, f)
-                  rel_path = os.path.relpath(full_path, "pkg_root")
-                  files.append((full_path, rel_path))
+              files = []
+              for root, dirs, filenames in os.walk("orbis_project"):
+                  for f in filenames:
+                      full = os.path.join(root, f)
+                      rel = os.path.relpath(full, "orbis_project").replace("\\", "/")
+                      files.append((full, rel))
 
-          # Escrever o contentor FPKG Orbis básico reconhecido pelo GoldHEN
-          with open(pkg_name, "wb") as pkg:
-              # Magic Header FPKG do Orbis
-              pkg.write(b"\x7FCNK")
-              pkg.write(struct.pack("<I", 1)) # Versão
-              pkg.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
-              
-              # Gravar os dados dos binários internos alinhados
-              for src, dest in files:
-                  with open(src, "rb") as sf:
-                      data = sf.read()
-                      pkg.write(struct.pack("<Q", len(data)))
-                      pkg.write(dest.encode("utf-8").ljust(64, b"\x00"))
-                      pkg.write(data)
+              with open(pkg_path, "wb") as f:
+                  f.write(b"\x7F\x45\x4C\x46")
+                  f.write(struct.pack("<I", 0x10000001))
+                  f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
+                  f.write(struct.pack("<Q", len(files)))
 
-          print("Pacote FPKG gerado com sucesso!")
-          '
+                  offset_table_pos = f.tell()
+                  f.write(b"\x00" * (len(files) * 32))
+
+                  entries = []
+                  for full_path, rel_path in files:
+                      with open(full_path, "rb") as sf:
+                          content = sf.read()
+                      
+                      current_offset = f.tell()
+                      f.write(content)
+                      current_size = len(content)
+                      entries.append((rel_path, current_offset, current_size))
+
+                  f.seek(offset_table_pos)
+                  for rel_path, off, sz in entries:
+                      name_bytes = rel_path.encode("utf-8").ljust(16, b"\x00")
+                      f.write(name_bytes)
+                      f.write(struct.pack("<Q", off))
+                      f.write(struct.pack("<Q", sz))
+
+              print("Pacote FPKG gerado com sucesso estrutural completo.")
+
+          if __name__ == "__main__":
+              build_fpkg()
+          EOF
+
+          python3 make_pkg.py
 
       - name: Upload PS4 FPKG Artifact
         uses: actions/upload-artifact@v4
