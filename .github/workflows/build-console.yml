@@ -91,12 +91,13 @@ jobs:
         run: |
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libGLESv2.so /usr/lib/x86_64-linux-gnu/libGLESv3.so
 
-      - name: Add STB implementations
+      - name: Patch PS4 source for missing implementations
         run: |
           echo '#define STB_IMAGE_IMPLEMENTATION' >> src/ps4/ps4.c
           echo '#include "stb_image.h"' >> src/ps4/ps4.c
           echo '#define STB_IMAGE_WRITE_IMPLEMENTATION' >> src/ps4/ps4.c
           echo '#include "stb_image_write.h"' >> src/ps4/ps4.c
+          echo 'void platformLog(const char *fmt, ...) { (void)fmt; }' >> src/ps4/ps4.c
 
       - name: Set up ccache
         uses: actions/cache@v4
