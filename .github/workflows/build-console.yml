@@ -121,18 +121,17 @@ jobs:
         run: |
           mkdir -p pkg_root/sce_sys
           
-          # Copiar o binário gerado para a raiz do pacote como eboot.bin principal
+          # Copiar o binário compilado para a raiz como eboot.bin
           cp build/butterscotch pkg_root/eboot.bin
 
-          # Criar o param.sfo básico com ID e título do projeto
-          # (Pode alterar o TITLE_ID para o ID que preferir, ex: CUSA12345)
+          # Criar o param.sfo com as informações do projeto
           cat << 'EOF' > pkg_root/sce_sys/param.sfo.txt
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
           EOF
 
-          # Se tiver o data.win do jogo na raiz do repositório, incluímos no pacote
+          # Se o data.win estiver presente no repositório, ele entra na estrutura
           if [ -f "data.win" ]; then
             cp data.win pkg_root/data.win
           fi
