@@ -104,7 +104,8 @@ jobs:
           cmake -B build -G Ninja \
             -DWERROR=OFF \
             -DPLATFORM=ps4 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-include stb_image_write.h"
             
           cmake --build build
 
