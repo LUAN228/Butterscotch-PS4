@@ -11,8 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install system dependencies and Wine
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y \
             libopenal-dev \
@@ -28,7 +29,13 @@ jobs:
             ninja-build \
             python3 \
             curl \
-            jq
+            jq \
+            wine64 \
+            wine \
+            wine32 \
+            cabextract \
+            zip \
+            unzip
 
       - name: Fix GLESv3 symlink
         run: |
@@ -59,22 +66,33 @@ jobs:
             
           cmake --build build
 
-      - name: Assemble OpenOrbis Package Structure
+      - name: Download and Setup OpenOrbis Toolchain & Packaging Suite
+        run: |
+          curl -L -s "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.1/openorbis-sdk-windows.zip" -o openorbis_sdk.zip
+          unzip -q openorbis_sdk.zip
+          
+          # Descarregar ferramentas de suporte do SDK para garantir o orbis-pub-cmd nativo
+          curl -L -s "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.1/openorbis-linux.tar.gz" -o openorbis_linux.tar.gz || true
+          if [ -f "openorbis_linux.tar.gz" ]; then
+            tar -xzf openorbis_linux.tar.gz || true
+          fi
+
+      - name: Prepare Project Structure for Orbis Compiler
         run: |
           curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
 
-          mkdir -p ps4_pkg_root/sce_sys
-          cp build/butterscotch ps4_pkg_root/eboot.bin
+          mkdir -p ps4_root/sce_sys
+          cp build/butterscotch ps4_root/eboot.bin
 
           if [ -f "data.win" ]; then
-            cp data.win ps4_pkg_root/data.win
+            cp data.win ps4_root/data.win
           fi
 
           if [ -f "icon0.png" ]; then
-            cp icon0.png ps4_pkg_root/sce_sys/icon0.png
+            cp icon0.png ps4_root/sce_sys/icon0.png
           fi
 
-          cat << 'EOF' > ps4_pkg_root/sce_sys/param.sfo
+          cat << 'EOF' > ps4_root/sce_sys/param.sfo
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
@@ -82,54 +100,36 @@ jobs:
           APP_TYPE "1"
           EOF
 
-          python3 -c '
-          import struct, os
+          cat << 'EOF' > project.gp4
+          <?xml version="1.0" encoding="utf-8" standalone="yes"?>
+          <ps4project fmt="gp4" version="1.0">
+            <volume type="pkg_pkg_iso">
+              <volume_info>
+                <volume_type>pkg_application</volume_type>
+                <content_id>IV0000-CUSA12345_00-BUTTERSCOTCH0000</content_id>
+                <passcode>00000000000000000000000000000000</passcode>
+              </volume_info>
+              <files dir="ps4_root">
+                <file targ_path="eboot.bin" orig_path="eboot.bin" />
+                <file targ_path="sce_sys/param.sfo" orig_path="sce_sys/param.sfo" />
+                <file targ_path="sce_sys/icon0.png" orig_path="sce_sys/icon0.png" />
+              </files>
+            </volume>
+          </ps4project>
+          EOF
 
-          def package_openorbis():
-              pkg_name = "butterscotch_ps4.pkg"
-              print("A criar o pacote FPKG Orbis...")
+      - name: Generate True FPKG via Orbis Publishing CLI
+        run: |
+          # Localizar o binário do orbis-pub-cmd e gerar o pacote assinado real
+          if [ -f "orbis-pub-cmd.exe" ]; then
+            wine orbis-pub-cmd.exe img_create project.gp4 butterscotch_ps4.pkg
+          elif [ -f "bin/orbis-pub-cmd.exe" ]; then
+            wine bin/orbis-pub-cmd.exe img_create project.gp4 butterscotch_ps4.pkg
+          else
+            find . -name "orbis-pub-cmd.exe" -exec wine {} img_create project.gp4 butterscotch_ps4.pkg \;
+          fi
 
-              files = []
-              for root, dirs, filenames in os.walk("ps4_pkg_root"):
-                  for filename in filenames:
-                      full_path = os.path.join(root, filename)
-                      rel_path = os.path.relpath(full_path, "ps4_pkg_root").replace("\\", "/")
-                      files.append((full_path, rel_path))
-
-              with open(pkg_name, "wb") as f:
-                  f.write(b"\x7FPCK")
-                  f.write(struct.pack("<I", 1))
-                  f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
-                  f.write(struct.pack("<Q", len(files)))
-
-                  table_offset = f.tell()
-                  f.write(b"\x00" * (len(files) * 64))
-
-                  entries = []
-                  for full_path, rel_path in files:
-                      with open(full_path, "rb") as sf:
-                          data = sf.read()
-                      
-                      current_offset = f.tell()
-                      padding = (16384 - (current_offset % 16384)) % 16384
-                      f.write(b"\x00" * padding)
-                      
-                      data_offset = f.tell()
-                      f.write(data)
-                      entries.append((rel_path, data_offset, len(data)))
-
-                  f.seek(table_offset)
-                  for rel_path, offset, size in entries:
-                      f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
-                      f.write(struct.pack("<Q", offset))
-                      f.write(struct.pack("<Q", size))
-                      f.write(struct.pack("<Q", 0))
-
-              print("Pacote gerado com sucesso!")
-
-          if __name__ == "__main__":
-              package_openorbis()
-          '
+          ls -la butterscotch_ps4.pkg
 
       - name: Upload PS4 FPKG Artifact
         uses: actions/upload-artifact@v4
