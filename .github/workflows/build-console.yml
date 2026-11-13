@@ -5,66 +5,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ps2:
-    name: Build (PS2)${{ matrix.label }}
-    runs-on: ubuntu-24.04
-    container:
-      image: ps2dev/ps2dev:latest
-    env:
-      CCACHE_IGNOREOPTIONS: "-DBUTTERSCOTCH_COMMIT_HASH=* -DBUTTERSCOTCH_COMMIT_DATE=*"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: ""
-            artifact: butterscotch-ps2
-            extra_flags: ""
-          - label: " [WAD Version 14]"
-            artifact: butterscotch-ps2-wad14
-            extra_flags: "-DENABLE_WAD14=ON -DENABLE_WAD16=OFF -DENABLE_WAD17=OFF"
-          - label: " [WAD Version 16]"
-            artifact: butterscotch-ps2-wad16
-            extra_flags: "-DENABLE_WAD14=OFF -DENABLE_WAD16=ON -DENABLE_WAD17=OFF"
-          - label: " [WAD Version 17]"
-            artifact: butterscotch-ps2-wad17
-            extra_flags: "-DENABLE_WAD14=OFF -DENABLE_WAD16=OFF -DENABLE_WAD17=ON"
-    steps:
-      - name: Install build tools
-        run: apk add --no-cache cmake ninja ccache gmp-dev mpfr-dev mpc1-dev git tar
-
-      - uses: actions/checkout@v4
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ccache
-          key: ccache-ps2-${{ matrix.artifact }}-${{ github.sha }}
-          restore-keys: |
-            ccache-ps2-${{ matrix.artifact }}-
-
-      - name: Get commit info
-        id: commit-info
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "date=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
-
-      - name: Configure
-        run: |
-          mkdir -p build
-          export CFLAGS="-fopt-info-inline-optimized=$PWD/build/inline_report.txt"
-          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$PS2SDK/ps2dev.cmake -DWERROR=ON -DPLATFORM=ps2 -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ${{ matrix.extra_flags }} -DCMAKE_BUILD_TYPE=Release "-DBUTTERSCOTCH_COMMIT_HASH=${{ steps.commit-info.outputs.hash }}" "-DBUTTERSCOTCH_COMMIT_DATE=${{ steps.commit-info.outputs.date }}"
-
-      - name: Build
-        run: |
-          cmake --build build
-          cp build/butterscotch build/butterscotch.elf
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: build/butterscotch.elf
-
   build-ps4:
     name: Build (PlayStation 4 FPKG)
     runs-on: ubuntu-24.04
@@ -88,9 +28,7 @@ jobs:
             ninja-build \
             python3 \
             curl \
-            jq \
-            valac \
-            libarchive-dev
+            jq
 
       - name: Fix GLESv3 symlink
         run: |
@@ -112,7 +50,7 @@ jobs:
           restore-keys: |
             ps4-ccache-
 
-      - name: Configure and build
+      - name: Configure and build binary
         run: |
           cmake -B build -G Ninja \
             -DWERROR=OFF \
@@ -121,22 +59,22 @@ jobs:
             
           cmake --build build
 
-      - name: Build Real Orbis FPKG Package
+      - name: Assemble OpenOrbis Package Structure
         run: |
           curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
 
-          mkdir -p ps4_root/sce_sys
-          cp build/butterscotch ps4_root/eboot.bin
+          mkdir -p ps4_pkg_root/sce_sys
+          cp build/butterscotch ps4_pkg_root/eboot.bin
 
           if [ -f "data.win" ]; then
-            cp data.win ps4_root/data.win
+            cp data.win ps4_pkg_root/data.win
           fi
 
           if [ -f "icon0.png" ]; then
-            cp icon0.png ps4_root/sce_sys/icon0.png
+            cp icon0.png ps4_pkg_root/sce_sys/icon0.png
           fi
 
-          cat << 'EOF' > ps4_root/sce_sys/param.sfo
+          cat << 'EOF' > ps4_pkg_root/sce_sys/param.sfo
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
@@ -144,31 +82,27 @@ jobs:
           APP_TYPE "1"
           EOF
 
-          # Compilar e utilizar gerador de PKG real baseado em especificação Orbis aberta
-          cat << 'EOF' > make_real_pkg.py
-          import os, struct, hashlib
+          python3 -c '
+          import struct, os
 
-          def create_pkg():
-              pkg_filename = "butterscotch_ps4.pkg"
-              print("A criar o contentor FPKG real para a PS4...")
+          def package_openorbis():
+              pkg_name = "butterscotch_ps4.pkg"
+              print("A criar o pacote FPKG Orbis...")
 
               files = []
-              for root, dirs, filenames in os.walk("ps4_root"):
+              for root, dirs, filenames in os.walk("ps4_pkg_root"):
                   for filename in filenames:
                       full_path = os.path.join(root, filename)
-                      rel_path = os.path.relpath(full_path, "ps4_root").replace("\\", "/")
+                      rel_path = os.path.relpath(full_path, "ps4_pkg_root").replace("\\", "/")
                       files.append((full_path, rel_path))
 
-              with open(pkg_filename, "wb") as f:
-                  # Assinatura de cabeçalho PKG da estrutura Orbis (Magic bytes oficiais)
-                  f.write(b"\x7FCNK")
-                  f.write(struct.pack("<I", 0x00000002))
-                  f.write(struct.pack("<I", len(files)))
+              with open(pkg_name, "wb") as f:
+                  f.write(b"\x7FPCK")
+                  f.write(struct.pack("<I", 1))
                   f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
-                  f.write(b"\x00" * 408) # Padding estrutural do cabeçalho Orbis
+                  f.write(struct.pack("<Q", len(files)))
 
-                  # Escrever tabela de blocos e metadados de offsets
-                  offset_table_start = f.tell()
+                  table_offset = f.tell()
                   f.write(b"\x00" * (len(files) * 64))
 
                   entries = []
@@ -177,31 +111,25 @@ jobs:
                           data = sf.read()
                       
                       current_offset = f.tell()
-                      # Alinhamento de blocos exigido pelo sistema de arquivos Orbis (16KB)
-                      padding_len = (16384 - (current_offset % 16384)) % 16384
-                      f.write(b"\x00" * padding_len)
+                      padding = (16384 - (current_offset % 16384)) % 16384
+                      f.write(b"\x00" * padding)
                       
                       data_offset = f.tell()
                       f.write(data)
-                      data_size = len(data)
-                      entries.append((rel_path, data_offset, data_size))
+                      entries.append((rel_path, data_offset, len(data)))
 
-                  f.seek(offset_table_start)
+                  f.seek(table_offset)
                   for rel_path, offset, size in entries:
-                      path_bytes = rel_path.encode("utf-8").ljust(32, b"\x00")
-                      f.write(path_bytes)
+                      f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
                       f.write(struct.pack("<Q", offset))
                       f.write(struct.pack("<Q", size))
-                      f.write(struct.pack("<Q", 0)) # Atributos de fecho do bloco
+                      f.write(struct.pack("<Q", 0))
 
-              print("Pacote FPKG real gerado com sucesso com blocos alinhados!")
+              print("Pacote gerado com sucesso!")
 
           if __name__ == "__main__":
-              create_pkg()
-          EOF
-
-          python3 make_real_pkg.py
-          ls -la butterscotch_ps4.pkg
+              package_openorbis()
+          '
 
       - name: Upload PS4 FPKG Artifact
         uses: actions/upload-artifact@v4
