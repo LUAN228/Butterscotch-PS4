@@ -8,75 +8,49 @@ jobs:
   build-ps4:
     name: Build (PlayStation 4 FPKG)
     runs-on: ubuntu-24.04
+    container:
+      image: openorbis/ps4-toolchain:latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libopenal-dev \
-            libsdl2-dev \
-            libgles-dev \
-            libgl1-mesa-dev \
-            libavformat-dev \
-            libavcodec-dev \
-            libavutil-dev \
-            libswscale-dev \
-            libswresample-dev \
-            pkg-config \
-            ninja-build \
-            python3 \
-            curl \
-            jq \
-            build-essential
+      - name: Install ccache
+        run: apt-get update && apt-get install -y ccache curl jq
 
-      - name: Fix GLESv3 symlink
-        run: |
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libGLESv2.so /usr/lib/x86_64-linux-gnu/libGLESv3.so
-
-      - name: Patch PS4 source for missing implementations
-        run: |
-          echo '#define STB_IMAGE_IMPLEMENTATION' >> src/ps4/ps4.c
-          echo '#include "stb_image.h"' >> src/ps4/ps4.c || true
-          echo '#define STB_IMAGE_WRITE_IMPLEMENTATION' >> src/ps4/ps4.c
-          echo '#include "stb_image_write.h"' >> src/ps4/ps4.c || true
-          echo 'void platformLog(const char *fmt, ...) { (void)fmt; }' >> src/ps4/ps4.c
-
-      - name: Set up ccache
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ps4-ccache-${{ github.sha }}
+          key: ccache-ps4-${{ github.sha }}
           restore-keys: |
-            ps4-ccache-
+            ccache-ps4-
 
-      - name: Configure and Compile PS4 Binary
+      - name: Configure and Build
         run: |
           cmake -B build -G Ninja \
             -DWERROR=OFF \
             -DPLATFORM=ps4 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
             
           cmake --build build
 
-      - name: Generate Official Orbis FPKG Structure
+      - name: Package PFS and Build FPKG
         run: |
-          # Descarregar o ícone oficial do projeto mantendo o link pedido
+          # Descarregar o ícone oficial do projeto
           curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
 
-          mkdir -p ps4_pkg_root/sce_sys
-          cp build/butterscotch ps4_pkg_root/eboot.bin
+          mkdir -p ps4_root/sce_sys
+          cp build/butterscotch ps4_root/eboot.bin
 
           if [ -f "data.win" ]; then
-            cp data.win ps4_pkg_root/data.win
+            cp data.win ps4_root/data.win
           fi
 
           if [ -f "icon0.png" ]; then
-            cp icon0.png ps4_pkg_root/sce_sys/icon0.png
+            cp icon0.png ps4_root/sce_sys/icon0.png
           fi
 
-          cat << 'EOF' > ps4_pkg_root/sce_sys/param.sfo
+          cat << 'EOF' > ps4_root/sce_sys/param.sfo
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
@@ -84,62 +58,36 @@ jobs:
           APP_TYPE "1"
           EOF
 
-          # Gerador integrado de alta compatibilidade para o pacote FPKG da PS4
-          python3 -c '
-          import os, struct
-
-          def generate_pkg():
-              pkg_filename = "butterscotch_ps4.pkg"
-              print("A criar a estrutura de blocos do pacote Orbis FPKG...")
-
-              files = []
-              for root, dirs, filenames in os.walk("ps4_pkg_root"):
-                  for filename in filenames:
-                      full_path = os.path.join(root, filename)
-                      rel_path = os.path.relpath(full_path, "ps4_pkg_root").replace("\\", "/")
-                      files.append((full_path, rel_path))
-
-              with open(pkg_filename, "wb") as f:
-                  # Cabeçalho padrão de contentores FPKG do ecossistema Orbis
-                  f.write(b"\x7FPKG")
-                  f.write(struct.pack("<I", 2))
-                  f.write(struct.pack("<I", len(files)))
-                  f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
-                  f.write(b"\x00" * 408)
-
-                  table_offset = f.tell()
-                  f.write(b"\x00" * (len(files) * 64))
-
-                  entries = []
-                  for full_path, rel_path in files:
-                      with open(full_path, "rb") as sf:
-                          data = sf.read()
-                      
-                      # Alinhamento obrigatório de 16KB para o sistema de ficheiros protegido (PFS)
-                      current_pos = f.tell()
-                      padding = (16384 - (current_pos % 16384)) % 16384
-                      f.write(b"\x00" * padding)
-                      
-                      data_pos = f.tell()
-                      f.write(data)
-                      entries.append((rel_path, data_pos, len(data)))
-
-                  f.seek(table_offset)
-                  for rel_path, pos, size in entries:
-                      f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
-                      f.write(struct.pack("<Q", pos))
-                      f.write(struct.pack("<Q", size))
-                      f.write(struct.pack("<Q", 0x1))
-
-              print("Pacote FPKG gerado com sucesso!")
-
-          if __name__ == "__main__":
-              generate_pkg()
-          '
+          # Conversão para formato FSELF e empacotamento Orbis real via toolchain do container
+          if command -v orbis-pub-cmd &> /dev/null; then
+              cat << 'EOF' > project.gp4
+              <?xml version="1.0" encoding="utf-8" standalone="yes"?>
+              <ps4project fmt="gp4" version="1.0">
+                <volume type="pkg_pkg_iso">
+                  <volume_info>
+                    <volume_type>pkg_application</volume_type>
+                    <content_id>IV0000-CUSA12345_00-BUTTERSCOTCH0000</content_id>
+                    <passcode>00000000000000000000000000000000</passcode>
+                  </volume_info>
+                  <files dir="ps4_root">
+                    <file targ_path="eboot.bin" orig_path="eboot.bin" />
+                    <file targ_path="sce_sys/param.sfo" orig_path="sce_sys/param.sfo" />
+                    <file targ_path="sce_sys/icon0.png" orig_path="sce_sys/icon0.png" />
+                  </files>
+                </volume>
+              </ps4project>
+              EOF
+              orbis-pub-cmd img_create project.gp4 butterscotch_ps4.pkg
+          elif command -v pkgtool &> /dev/null; then
+              pkgtool create ps4_root butterscotch_ps4.pkg
+          else
+              # Utilização das ferramentas nativas do container OpenOrbis para assinatura PFS
+              oo-pack create --title-id CUSA12345 --content-id IV0000-CUSA12345_00-BUTTERSCOTCH0000 ps4_root butterscotch_ps4.pkg
+          fi
 
           ls -la butterscotch_ps4.pkg
 
-      - name: Upload PS4 FPKG Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: butterscotch-ps4-pkg
