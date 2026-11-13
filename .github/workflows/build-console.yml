@@ -11,8 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Build Dependencies & Tools
+      - name: Install Build Dependencies & Wine Suite
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y \
             libopenal-dev \
@@ -26,13 +27,17 @@ jobs:
             libswresample-dev \
             pkg-config \
             ninja-build \
-            python3 \
             curl \
             jq \
             build-essential \
             git \
             cmake \
-            ccache
+            ccache \
+            wine64 \
+            wine32 \
+            cabextract \
+            zip \
+            unzip
 
       - name: Fix GLESv3 symlink
         run: |
@@ -54,7 +59,7 @@ jobs:
           restore-keys: |
             ccache-ps4-
 
-      - name: Configure and Build
+      - name: Configure and Build Binary
         run: |
           cmake -B build -G Ninja \
             -DWERROR=OFF \
@@ -65,7 +70,7 @@ jobs:
             
           cmake --build build
 
-      - name: Package PFS and Build FPKG
+      - name: Download Official Orbis Publishing Tooling & Build Real FPKG
         run: |
           # Descarregar o ícone oficial do projeto mantendo o link requisitado
           curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
@@ -89,23 +94,43 @@ jobs:
           APP_TYPE "1"
           EOF
 
-          # Geração estruturada do pacote compatível com o ecossistema Orbis
-          python3 -c '
-          import os, struct
-          print("A gerar o pacote FPKG estruturado para a PS4...")
-          with open("butterscotch_ps4.pkg", "wb") as f:
-              f.write(b"\x7FPKG" + struct.pack("<I", 2) + struct.pack("<I", 3))
-              f.write(b"CUSA12345" + b"\x00" * 23)
-              for root, dirs, files in os.walk("ps4_root"):
-                  for file in files:
-                      p = os.path.join(root, file)
-                      rp = os.path.relpath(p, "ps4_root").replace("\\", "/")
-                      with open(p, "rb") as sf:
-                          d = sf.read()
-                      f.write(rp.encode("utf-8").ljust(64, b"\x00"))
-                      f.write(struct.pack("<Q", len(d)) + b"\x00" * 56)
-                      f.write(d)
-          '
+          cat << 'EOF' > project.gp4
+          <?xml version="1.0" encoding="utf-8" standalone="yes"?>
+          <ps4project fmt="gp4" version="1.0">
+            <volume type="pkg_pkg_iso">
+              <volume_info>
+                <volume_type>pkg_application</volume_type>
+                <content_id>IV0000-CUSA12345_00-BUTTERSCOTCH0000</content_id>
+                <passcode>00000000000000000000000000000000</passcode>
+              </volume_info>
+              <files dir="ps4_root">
+                <file targ_path="eboot.bin" orig_path="eboot.bin" />
+                <file targ_path="sce_sys/param.sfo" orig_path="sce_sys/param.sfo" />
+                <file targ_path="sce_sys/icon0.png" orig_path="sce_sys/icon0.png" />
+              </files>
+            </volume>
+          </ps4project>
+          EOF
+
+          # Descarregar o utilitário oficial de linha de comando para gerar o FPKG real via Wine
+          curl -L -s "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.1/openorbis-sdk-windows.zip" -o orbis_sdk.zip || true
+          if [ -f "orbis_sdk.zip" ]; then
+            unzip -q orbis_sdk.zip || true
+          fi
+
+          # Executar a ferramenta real de empacotamento Orbis
+          if [ -f "orbis-pub-cmd.exe" ]; then
+            wine orbis-pub-cmd.exe img_create project.gp4 butterscotch_ps4.pkg
+          elif [ -f "bin/orbis-pub-cmd.exe" ]; then
+            wine bin/orbis-pub-cmd.exe img_create project.gp4 butterscotch_ps4.pkg
+          else
+            find . -name "orbis-pub-cmd.exe" -exec wine {} img_create project.gp4 butterscotch_ps4.pkg \;
+          fi
+
+          if [ ! -f "butterscotch_ps4.pkg" ]; then
+              echo "Erro crítico na compilação do FPKG."
+              exit 1
+          fi
 
           ls -la butterscotch_ps4.pkg
 
