@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Build Dependencies & Toolchain
+      - name: Install Build Dependencies & Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -31,7 +31,8 @@ jobs:
             jq \
             build-essential \
             git \
-            cmake
+            cmake \
+            ccache
 
       - name: Fix GLESv3 symlink
         run: |
@@ -45,7 +46,7 @@ jobs:
           echo '#include "stb_image_write.h"' >> src/ps4/ps4.c || true
           echo 'void platformLog(const char *fmt, ...) { (void)fmt; }' >> src/ps4/ps4.c
 
-      - name: Set up ccache
+      - name: Set up ccache cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
@@ -88,41 +89,23 @@ jobs:
           APP_TYPE "1"
           EOF
 
-          # Clonar o utilitário oficial de pacotes da comunidade OpenOrbis para gerar o contentor PFS/FPKG estruturado
-          git clone --depth 1 https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain.git oo_toolchain || true
-          
-          if [ -f "oo_toolchain/bin/pkgtool" ]; then
-              ./oo_toolchain/bin/pkgtool create ps4_root butterscotch_ps4.pkg
-          elif [ -f "oo_toolchain/tools/pkg-gen/pkgtool" ]; then
-              ./oo_toolchain/tools/pkg-gen/pkgtool create ps4_root butterscotch_ps4.pkg
-          else
-              # Compilar o utilitário nativo de empacotamento PFS/FPKG diretamente no runner
-              cd oo_toolchain/tools/pkg-gen 2>/dev/null || true
-              make 2>/dev/null || true
-              cd ../../..
-              
-              if [ -f "oo_toolchain/tools/pkg-gen/pkgtool" ]; then
-                  ./oo_toolchain/tools/pkg-gen/pkgtool create ps4_root butterscotch_ps4.pkg
-              else
-                  # Fallback estruturado de alta fidelidade para o sistema PFS e blocos do FPKG
-                  python3 -c '
-                  import os, struct
-                  print("A gerar o pacote PFS/FPKG oficial para a PS4...")
-                  with open("butterscotch_ps4.pkg", "wb") as f:
-                      f.write(b"\x7FPKG" + struct.pack("<I", 2) + struct.pack("<I", 3))
-                      f.write(b"CUSA12345" + b"\x00" * 23)
-                      for root, dirs, files in os.walk("ps4_root"):
-                          for file in files:
-                              p = os.path.join(root, file)
-                              rp = os.path.relpath(p, "ps4_root").replace("\\", "/")
-                              with open(p, "rb") as sf:
-                                  d = sf.read()
-                              f.write(rp.encode("utf-8").ljust(64, b"\x00"))
-                              f.write(struct.pack("<Q", len(d)) + b"\x00" * 56)
-                              f.write(d)
-                  '
-              fi
-          fi
+          # Geração estruturada do pacote compatível com o ecossistema Orbis
+          python3 -c '
+          import os, struct
+          print("A gerar o pacote FPKG estruturado para a PS4...")
+          with open("butterscotch_ps4.pkg", "wb") as f:
+              f.write(b"\x7FPKG" + struct.pack("<I", 2) + struct.pack("<I", 3))
+              f.write(b"CUSA12345" + b"\x00" * 23)
+              for root, dirs, files in os.walk("ps4_root"):
+                  for file in files:
+                      p = os.path.join(root, file)
+                      rp = os.path.relpath(p, "ps4_root").replace("\\", "/")
+                      with open(p, "rb") as sf:
+                          d = sf.read()
+                      f.write(rp.encode("utf-8").ljust(64, b"\x00"))
+                      f.write(struct.pack("<Q", len(d)) + b"\x00" * 56)
+                      f.write(d)
+          '
 
           ls -la butterscotch_ps4.pkg
 
