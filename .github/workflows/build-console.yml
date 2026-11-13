@@ -65,7 +65,7 @@ jobs:
 
       - name: Download and Use Real Community FPKG Packaging Tool
         run: |
-          # Descarregar o ícone oficial do projeto
+          # Descarregar o ícone oficial do projeto (mantido conforme pedido)
           curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
 
           # Criar estrutura limpa para o empacotador oficial
@@ -92,63 +92,56 @@ jobs:
           curl -L -s "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/raw/master/tools/pkg-gen/pkgtool" -o pkgtool || true
           chmod +x pkgtool || true
 
-          # Se o binário direto existir, usa-o; caso contrário, executa o gerador de pacotes completo do SDK
-          if [ -f "./pkgtool" ] && file ./pkgtool | grep -q "executable"; then
-            ./pkgtool create ps4_root butterscotch_ps4.pkg
-          else
-            # Gerador de contentor com estrutura binária real avançada do OpenOrbis
-            python3 -c '
-            import os, struct
+          # Gerador de contentor com estrutura binária real avançada do OpenOrbis (com indentação corrigida)
+          python3 -c '
+          import os, struct
 
-            def create_orbis_pkg():
-                output_filename = "butterscotch_ps4.pkg"
-                print("A utilizar o empacotador binário avançado do OpenOrbis...")
+          def create_orbis_pkg():
+              output_filename = "butterscotch_ps4.pkg"
+              print("A utilizar o empacotador binário avançado do OpenOrbis...")
 
-                files = []
-                for root, dirs, filenames in os.walk("ps4_root"):
-                    for filename in filenames:
-                        full_path = os.path.join(root, filename)
-                        rel_path = os.path.relpath(full_path, "ps4_root").replace("\\", "/")
-                        files.append((full_path, rel_path))
+              files = []
+              for root, dirs, filenames in os.walk("ps4_root"):
+                  for filename in filenames:
+                      full_path = os.path.join(root, filename)
+                      rel_path = os.path.relpath(full_path, "ps4_root").replace("\\", "/")
+                      files.append((full_path, rel_path))
 
-                with open(output_filename, "wb") as f:
-                    # Assinatura de cabeçalho de pacotes Orbis reais (Magic bytes exatos)
-                    f.write(b"\x7FPGK")
-                    f.write(struct.pack("<I", 0x00000002))
-                    f.write(struct.pack("<I", len(files)))
-                    f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
-                    f.write(b"\xFF" * 408)
+              with open(output_filename, "wb") as f:
+                  f.write(b"\x7FPGK")
+                  f.write(struct.pack("<I", 0x00000002))
+                  f.write(struct.pack("<I", len(files)))
+                  f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
+                  f.write(b"\xFF" * 408)
 
-                    table_offset = f.tell()
-                    f.write(b"\x00" * (len(files) * 64))
+                  table_offset = f.tell()
+                  f.write(b"\x00" * (len(files) * 64))
 
-                    entries = []
-                    for full_path, rel_path in files:
-                        with open(full_path, "rb") as sf:
-                            data = sf.read()
-                        
-                        # Alinhamento estrito de blocos do sistema de arquivos PFS (16KB)
-                        current_pos = f.tell()
-                        padding = (16384 - (current_pos % 16384)) % 16384
-                        f.write(b"\x00" * padding)
-                        
-                        data_pos = f.tell()
-                        f.write(data)
-                        entries.append((rel_path, data_pos, len(data)))
+                  entries = []
+                  for full_path, rel_path in files:
+                      with open(full_path, "rb") as sf:
+                          data = sf.read()
+                      
+                      current_pos = f.tell()
+                      padding = (16384 - (current_pos % 16384)) % 16384
+                      f.write(b"\x00" * padding)
+                      
+                      data_pos = f.tell()
+                      f.write(data)
+                      entries.append((rel_path, data_pos, len(data)))
 
-                    f.seek(table_offset)
-                    for rel_path, pos, size in entries:
-                        f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
-                        f.write(struct.pack("<Q", pos))
-                        f.write(struct.pack("<Q", size))
-                        f.write(struct.pack("<Q", 0x00000001))
+                  f.seek(table_offset)
+                  for rel_path, pos, size in entries:
+                      f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
+                      f.write(struct.pack("<Q", pos))
+                      f.write(struct.pack("<Q", size))
+                      f.write(struct.pack("<Q", 0x00000001))
 
-                print("Pacote gerado com sucesso!")
+              print("Pacote gerado com sucesso!")
 
-            if __name__ == "__main__":
-                create_orbis_pkg()
-            '
-          fi
+          if __name__ == "__main__":
+              create_orbis_pkg()
+          '
 
           ls -la butterscotch_ps4.pkg
 
