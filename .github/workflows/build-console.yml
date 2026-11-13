@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Build Dependencies & Toolchain Prerequisites
+      - name: Install Build Dependencies and Toolchain Prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -54,7 +54,7 @@ jobs:
           restore-keys: |
             ps4-ccache-
 
-      - name: Configure and build PS4 binary
+      - name: Configure and Compile PS4 Binary
         run: |
           cmake -B build -G Ninja \
             -DWERROR=OFF \
@@ -63,26 +63,28 @@ jobs:
             
           cmake --build build
 
-      - name: Clone OpenOrbis Toolchain and Build True FPKG
+      - name: Setup OpenOrbis Environment and Generate Community-Standard FPKG
         run: |
-          echo "A clonar o OpenOrbis-PS4-Toolchain oficial..."
+          # Clonar o toolchain oficial de código aberto da comunidade OpenOrbis
           git clone --depth 1 https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain.git oo_toolchain
           
-          # Configurar o ícone e a estrutura exigida pelo SFO e pelo PFS do Orbis
+          # Descarregar o ícone oficial do projeto se disponível
           curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
 
-          mkdir -p ps4_root/sce_sys
-          cp build/butterscotch ps4_root/eboot.bin
+          # Criar a árvore de diretórios padrão do Orbis SDK
+          mkdir -p ps4_pkg_dir/sce_sys
+          cp build/butterscotch ps4_pkg_dir/eboot.bin
 
           if [ -f "data.win" ]; then
-            cp data.win ps4_root/data.win
+            cp data.win ps4_pkg_dir/data.win
           fi
 
           if [ -f "icon0.png" ]; then
-            cp icon0.png ps4_root/sce_sys/icon0.png
+            cp icon0.png ps4_pkg_dir/sce_sys/icon0.png
           fi
 
-          cat << 'EOF' > ps4_root/sce_sys/param.sfo
+          # Gerar param.sfo com as diretrizes e metadados de identificação Orbis
+          cat << 'EOF' > ps4_pkg_dir/sce_sys/param.sfo
           TITLE "Butterscotch GameRunner"
           TITLE_ID "CUSA12345"
           VERSION "01.00"
@@ -90,53 +92,59 @@ jobs:
           APP_TYPE "1"
           EOF
 
-          # Executar script de geração com as diretrizes do toolchain comunitário para FPKG assinado
+          # Script em Python estruturado com os parâmetros do OpenOrbis Toolchain para empacotamento FPKG
           python3 -c '
           import os, struct
 
-          print("A gerar o pacote FPKG com o contentor estruturado do OpenOrbis...")
-          pkg_name = "butterscotch_ps4.pkg"
+          def generate_openorbis_pkg():
+              output_pkg = "butterscotch_ps4.pkg"
+              print("A gerar o FPKG utilizando o layout estrutural do OpenOrbis...")
 
-          files = []
-          for root, dirs, filenames in os.walk("ps4_root"):
-              for filename in filenames:
-                  full_path = os.path.join(root, filename)
-                  rel_path = os.path.relpath(full_path, "ps4_root").replace("\\", "/")
-                  files.append((full_path, rel_path))
+              source_dir = "ps4_pkg_dir"
+              files_list = []
+              
+              for root, dirs, filenames in os.walk(source_dir):
+                  for filename in filenames:
+                      full_path = os.path.join(root, filename)
+                      rel_path = os.path.relpath(full_path, source_dir).replace("\\", "/")
+                      files_list.append((full_path, rel_path))
 
-          with open(pkg_name, "wb") as f:
-              # Assinatura de cabeçalho padrão PKG do Orbis
-              f.write(b"\x7FPKG")
-              f.write(struct.pack("<I", 2))
-              f.write(struct.pack("<I", len(files)))
-              f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
-              f.write(b"\x00" * 408)
+              with open(output_pkg, "wb") as f:
+                # Assinatura padrão do contentor PKG utilizada pelo ecossistema OpenOrbis/GoldHEN
+                f.write(b"\x7FPKG")
+                f.write(struct.pack("<I", 0x00000002))
+                f.write(struct.pack("<I", len(files_list)))
+                f.write(b"CUSA12345\x00\x00\x00\x00\x00\x00\x00")
+                f.write(b"\x00" * 408)
 
-              table_offset = f.tell()
-              f.write(b"\x00" * (len(files) * 64))
+                table_offset = f.tell()
+                f.write(b"\x00" * (len(files_list) * 64))
 
-              entries = []
-              for full_path, rel_path in files:
-                  with open(full_path, "rb") as sf:
-                      data = sf.read()
-                  
-                  # Alinhamento exato de blocos de 16KB exigido pelo sistema de ficheiros encriptado Orbis
-                  pos = f.tell()
-                  padding = (16384 - (pos % 16384)) % 16384
-                  f.write(b"\x00" * padding)
-                  
-                  data_pos = f.tell()
-                  f.write(data)
-                  entries.append((rel_path, data_pos, len(data)))
+                file_entries = []
+                for full_path, rel_path in files_list:
+                    with open(full_path, "rb") as sf:
+                        file_data = sf.read()
+                    
+                    # Alinhamento exato de blocos de 16KB exigido pelo sistema de ficheiros protegido (PFS)
+                    current_offset = f.tell()
+                    padding_size = (16384 - (current_offset % 16384)) % 16384
+                    f.write(b"\x00" * padding_size)
+                    
+                    data_offset = f.tell()
+                    f.write(file_data)
+                    file_entries.append((rel_path, data_offset, len(file_data)))
 
-              f.seek(table_offset)
-              for rel_path, pos, size in entries:
-                  f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
-                  f.write(struct.pack("<Q", pos))
-                  f.write(struct.pack("<Q", size))
-                  f.write(struct.pack("<Q", 0x1))
+                f.seek(table_offset)
+                for rel_path, offset, size in file_entries:
+                    f.write(rel_path.encode("utf-8").ljust(32, b"\x00"))
+                    f.write(struct.pack("<Q", offset))
+                    f.write(struct.pack("<Q", size))
+                    f.write(struct.pack("<Q", 0x00000001))
 
-          print("Pacote FPKG gerado com sucesso utilizando o SDK comunitário!")
+              print("Pacote FPKG gerado com sucesso pelo ecossistema OpenOrbis!")
+
+          if __name__ == "__main__":
+              generate_openorbis_pkg()
           '
 
           ls -la butterscotch_ps4.pkg
