@@ -13,6 +13,7 @@ jobs:
 
       - name: Install Build Dependencies & Tools
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             libopenal-dev \
@@ -33,7 +34,8 @@ jobs:
             cmake \
             ccache \
             zip \
-            unzip
+            unzip \
+            python3
 
       - name: Fix GLESv3 symlink
         run: |
@@ -41,11 +43,13 @@ jobs:
 
       - name: Patch PS4 source for missing implementations
         run: |
-          echo '#define STB_IMAGE_IMPLEMENTATION' >> src/ps4/ps4.c
-          echo '#include "stb_image.h"' >> src/ps4/ps4.c || true
-          echo '#define STB_IMAGE_WRITE_IMPLEMENTATION' >> src/ps4/ps4.c
-          echo '#include "stb_image_write.h"' >> src/ps4/ps4.c || true
-          echo 'void platformLog(const char *fmt, ...) { (void)fmt; }' >> src/ps4/ps4.c
+          set -euxo pipefail
+          if ! grep -q 'STB_IMAGE_IMPLEMENTATION' src/ps4/ps4.c; then
+            printf '\n#define STB_IMAGE_IMPLEMENTATION\n#include "stb_image.h"\n#define STB_IMAGE_WRITE_IMPLEMENTATION\n#include "stb_image_write.h"\n' >> src/ps4/ps4.c
+          fi
+          if ! grep -q 'platformLog(const char \*fmt' src/ps4/ps4.c; then
+            printf '\nvoid platformLog(const char *fmt, ...) { (void)fmt; }\n' >> src/ps4/ps4.c
+          fi
 
       - name: Set up ccache cache
         uses: actions/cache@v4
@@ -57,20 +61,19 @@ jobs:
 
       - name: Configure and Build Binary
         run: |
+          set -euxo pipefail
           cmake -B build -G Ninja \
             -DWERROR=OFF \
             -DPLATFORM=ps4 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-            
+
           cmake --build build
 
-      - name: Clone OpenOrbis Toolkit & Build Real FPKG
+      - name: Prepare PS4 package root
         run: |
-          # Descarregar o ícone oficial do projeto mantendo o link requisitado
-          curl -L -s "https://github.com/user-attachments/assets/ef8bdd5c-d407-4b3c-a4d5-07b25e8bbc70" -o icon0.png || true
-
+          set -euxo pipefail
           mkdir -p ps4_root/sce_sys
           cp build/butterscotch ps4_root/eboot.bin
 
@@ -82,60 +85,55 @@ jobs:
             cp icon0.png ps4_root/sce_sys/icon0.png
           fi
 
-          cat << 'EOF' > ps4_root/sce_sys/param.sfo
-          TITLE "Butterscotch GameRunner"
-          TITLE_ID "CUSA12345"
-          VERSION "01.00"
-          CATEGORY "gd"
-          APP_TYPE "1"
-          EOF
+          python3 tools/ps4_make_sfo.py \
+            --title "Butterscotch GameRunner" \
+            --title-id "CUSA12345" \
+            --version "01.00" \
+            --category "gd" \
+            --output ps4_root/sce_sys/param.sfo
 
-          # Clonar diretamente o repositório oficial do OpenOrbis para obter as ferramentas de linha de comando reais
-          git clone --depth 1 https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain.git oo_toolchain || true
+      - name: Clone OpenOrbis Toolkit
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain.git oo_toolchain
 
-          # Compilar o utilitário pkg-gen oficial contido no repositório
+      - name: Build pkggen tool
+        run: |
+          set -euxo pipefail
           if [ -d "oo_toolchain/tools/pkg-gen" ]; then
-              cd oo_toolchain/tools/pkg-gen
-              make || true
-              cd ../../..
+            cd oo_toolchain/tools/pkg-gen
+            make
+            cd ../../..
           fi
 
-          # Executar o empacotador gerado ou ferramentas nativas equivalentes do toolchain
+      - name: Create PS4 package
+        run: |
+          set -euxo pipefail
           if [ -f "oo_toolchain/tools/pkg-gen/pkgtool" ]; then
-              ./oo_toolchain/tools/pkg-gen/pkgtool create ps4_root butterscotch_ps4.pkg
+            ./oo_toolchain/tools/pkg-gen/pkgtool create ps4_root butterscotch_ps4.pkg
           elif [ -f "oo_toolchain/bin/pkgtool" ]; then
-              ./oo_toolchain/bin/pkgtool create ps4_root butterscotch_ps4.pkg
+            ./oo_toolchain/bin/pkgtool create ps4_root butterscotch_ps4.pkg
           else
-              # Ferramenta alternativa de montagem em C puro compilada na hora para garantir o FPKG real
-              cat << 'EOF' > make_pkg.c
-              #include <stdio.h>
-              #include <stdlib.h>
-              #include <string.h>
-              int main() {
-                  FILE *f = fopen("butterscotch_ps4.pkg", "wb");
-                  if (!f) return 1;
-                  // Assinatura padrão de contentor FPKG Orbis
-                  unsigned char magic[] = {0x7F, 0x50, 0x4B, 0x47, 0x02, 0x00, 0x00, 0x00};
-                  fwrite(magic, 1, 8, f);
-                  char title_id[32] = "CUSA12345";
-                  fwrite(title_id, 1, 32, f);
-                  // Preenchimento de blocos alinhados de 16KB do sistema PFS
-                  unsigned char pad[16384] = {0};
-                  for(int i = 0; i < 16; i++) fwrite(pad, 1, 16384, f);
-                  fclose(f);
-                  return 0;
-              }
-              EOF
-              gcc make_pkg.c -o make_pkg
-              ./make_pkg
+            echo "OpenOrbis pkgtool is not available; cannot create a valid PS4 FPKG without the official PS4 toolchain."
+            exit 1
           fi
 
-          if [ ! -f "butterscotch_ps4.pkg" ]; then
-              echo "Erro crítico na compilação do FPKG."
-              exit 1
-          fi
+          test -s butterscotch_ps4.pkg
+          ls -lh butterscotch_ps4.pkg
 
-          ls -la butterscotch_ps4.pkg
+      - name: Validate package layout
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import os
+          path = 'butterscotch_ps4.pkg'
+          with open(path, 'rb') as f:
+              first = f.read(16)
+          print(f'package_size={os.path.getsize(path)}')
+          print(f'header={first.hex()}')
+          if len(first) < 8:
+              raise SystemExit('PKG is too small to be valid')
+          PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
